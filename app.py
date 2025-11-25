@@ -5,7 +5,6 @@ from typing import List, Dict, Any, Optional
 import requests
 import numpy as np
 import pandas as pd
-from textblob import TextBlob
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -202,12 +201,37 @@ def get_similar_movies(movie_id: int, api_key: str, pages: int = 1) -> List[Dict
 # -----------------------------
 
 def compute_sentiment(text: str) -> float:
+    """
+    Very simple lexicon-based sentiment:
+    - counts positive and negative words
+    - returns score in roughly [-1, 1]
+    This keeps us 'sentiment-based' without external libraries.
+    """
     if not text:
         return 0.0
-    try:
-        return float(TextBlob(text).sentiment.polarity)
-    except Exception:
+
+    positive_words = {
+        "great", "good", "amazing", "wonderful", "excellent", "fantastic",
+        "fun", "enjoyable", "heartwarming", "uplifting", "beautiful",
+        "inspiring", "hilarious", "funny", "sweet", "charming"
+    }
+    negative_words = {
+        "bad", "terrible", "awful", "horrible", "boring", "dull",
+        "dark", "grim", "depressing", "sad", "tragic", "violent",
+        "disturbing", "brutal", "bloody", "gory"
+    }
+
+    text_lower = text.lower()
+    tokens = text_lower.split()
+
+    pos = sum(1 for t in tokens if t.strip(".,!?;:") in positive_words)
+    neg = sum(1 for t in tokens if t.strip(".,!?;:") in negative_words)
+
+    if pos == 0 and neg == 0:
         return 0.0
+
+    score = (pos - neg) / (pos + neg)
+    return float(score)
 
 
 def mood_label(polarity: float) -> str:
@@ -730,12 +754,17 @@ def main():
                     people_ids=people_ids or None,
                     max_pages=3,
                 )
+            except Exception as e:
+                st.error(f"Error running discovery: {e}")
+                movies = []
+
+            if movies:
                 st.success(f"Found {len(movies)} matching movies (showing up to 30).")
                 for m in movies[:30]:
                     show_movie_card(m, api_key, key_prefix="discover_")
                     st.markdown("---")
-            except Exception as e:
-                st.error(f"Error running discovery: {e}")
+            else:
+                st.info("No movies found with those filters.")
 
     # -------- Tab 3: Watchlist --------
     with tab3:
