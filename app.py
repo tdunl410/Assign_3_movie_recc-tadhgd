@@ -245,7 +245,6 @@ def mood_label(polarity: float) -> str:
 def extract_people(details: Dict[str, Any]) -> Tuple[List[str], str]:
     """
     Returns (cast_names, director_name).
-    Correct type hint using Tuple[...] instead of (List[str], str).
     """
     credits = details.get("credits", {})
     cast = credits.get("cast", []) or []
@@ -371,32 +370,22 @@ def hybrid_content_sentiment_recs(
 
     df = build_feature_frame(seed_details, candidate_details)
 
-    # Tokenize all texts
     docs = [tokenize(t) for t in df["combined_text"]]
-
-    # Compute IDF across all docs
     idf = compute_idf(docs)
-
-    # Compute TF-IDF vectors
     tfidf_vecs = [compute_tfidf(tokens, idf) for tokens in docs]
 
-    # Seed is row 0
     seed_vec = tfidf_vecs[0]
-
-    # Cosine similarity vs all docs
     sim = [cosine_sim_vec(seed_vec, v) for v in tfidf_vecs]
 
     seed_sent = df.loc[0, "sentiment"]
     sentiment_diff = np.abs(df["sentiment"].values - seed_sent)
 
-    # Hybrid score: higher content similarity and closer sentiment is better
     sim_arr = np.array(sim)
     hybrid_score = 0.75 * sim_arr - 0.25 * sentiment_diff
 
     df["content_similarity"] = sim_arr
     df["hybrid_score"] = hybrid_score
 
-    # Exclude the seed itself
     recs = df[df["kind"] == "CAND"].copy()
     recs = recs.sort_values("hybrid_score", ascending=False).head(top_k)
 
@@ -492,7 +481,6 @@ def show_movie_card(
             clicked = st.button("➕ Add to watchlist", key=btn_key)
 
             if clicked:
-                # Ensure key exists
                 if "watchlist" not in st.session_state:
                     st.session_state["watchlist"] = []
 
@@ -501,7 +489,6 @@ def show_movie_card(
                     st.error("Could not add this movie (missing ID).")
                     return
 
-                # Work on a copy and reassign to avoid any weirdness
                 current = list(st.session_state["watchlist"])
                 current_ids = [item["id"] for item in current]
 
@@ -558,14 +545,21 @@ def main():
         st.error("Please provide a TMDB API key in the sidebar to get started.")
         st.stop()
 
-    # Initialize watchlist
+    # Initialize state
     if "watchlist" not in st.session_state:
         st.session_state["watchlist"] = []
+    if "discover_results" not in st.session_state:
+        st.session_state["discover_results"] = []
+    if "person_movies" not in st.session_state:
+        st.session_state["person_movies"] = []
+    if "person_name" not in st.session_state:
+        st.session_state["person_name"] = ""
+    if "seed_recs" not in st.session_state:
+        st.session_state["seed_recs"] = []
 
     # Sidebar watchlist debug
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Watchlist size:** {len(st.session_state['watchlist'])}")
-    # Debug: raw state (you can remove this once you're happy)
     st.sidebar.caption(f"Raw watchlist: {st.session_state['watchlist']}")
 
     # ------------ Sidebar filters ------------
@@ -658,7 +652,7 @@ def main():
         if q:
             cols = st.columns(2)
 
-            # Left: title/overview search
+            # Left: title/overview search (just clickable titles)
             with cols[0]:
                 st.markdown("#### Title / plot matches")
                 try:
@@ -667,19 +661,17 @@ def main():
                     st.error(f"Error searching movies: {e}")
                     results = []
 
-                selected_movie_id = None
                 if results:
                     for m in results[:8]:
                         title = m.get("title")
                         year = (m.get("release_date") or "")[:4]
                         label = f"{title} ({year})"
-                        if st.button(label, key=f"nl_title_{m['id']}"):
-                            selected_movie_id = m["id"]
-                    st.caption("Click a title to get recommendations.")
+                        st.button(label, key=f"nl_title_{m['id']}")
+                    st.caption("Use the seed section below to get recs for a specific title.")
                 else:
                     st.info("No movies found matching that query.")
 
-            # Right: person-based
+            # Right: person-based discovery (store results in session_state)
             with cols[1]:
                 st.markdown("#### People matches (actors / directors)")
                 try:
@@ -706,13 +698,19 @@ def main():
                                 people_ids=[person["id"]],
                                 max_pages=2,
                             )
-                            st.markdown(f"##### Movies featuring {person.get('name')}")
-                            for m in movies_by_person[:10]:
-                                show_movie_card(m, api_key, key_prefix="person_")
+                            st.session_state["person_movies"] = movies_by_person
+                            st.session_state["person_name"] = person.get("name", "")
                         except Exception as e:
                             st.error(f"Error discovering movies by person: {e}")
                 else:
                     st.caption("No strong people matches for that query.")
+
+            # Always render person_movies if present (so Add buttons work)
+            if st.session_state["person_movies"]:
+                st.markdown(f"##### Movies featuring {st.session_state['person_name']}")
+                for m in st.session_state["person_movies"][:10]:
+                    show_movie_card(m, api_key, key_prefix="person_")
+                    st.markdown("---")
 
         # Seed-based recs
         st.markdown("---")
@@ -746,7 +744,6 @@ def main():
                         seed_details = None
 
                     if seed_details:
-                        # Candidate pool: TMDB similar + trending + popular
                         candidates = []
                         try:
                             candidates.extend(get_similar_movies(seed_movie["id"], api_key, pages=2))
@@ -761,7 +758,6 @@ def main():
                         except Exception:
                             pass
 
-                        # Deduplicate by ID and fetch detail for each candidate
                         seen_ids = set()
                         cand_details = []
                         for c in candidates:
@@ -776,17 +772,13 @@ def main():
                                 continue
 
                         rec_df = hybrid_content_sentiment_recs(seed_details, cand_details, top_k=10)
-                        st.markdown("#### Recommended for you")
 
+                        rec_cards = []
                         for _, row in rec_df.iterrows():
                             m = {
                                 "id": int(row["id"]),
                                 "title": row["title"],
                                 "overview": row["overview"],
-                                "poster_path": None,
-                                "vote_average": 0.0,
-                                "vote_count": 0,
-                                "release_date": seed_movie.get("release_date"),
                             }
                             try:
                                 d = get_movie_details(int(row["id"]), api_key)
@@ -795,15 +787,30 @@ def main():
                                 m["vote_count"] = d.get("vote_count", 0)
                                 m["runtime"] = d.get("runtime", None)
                                 m["original_language"] = d.get("original_language", "")
+                                m["release_date"] = d.get("release_date", seed_movie.get("release_date"))
                             except Exception:
-                                pass
+                                m["poster_path"] = None
+                                m["vote_average"] = 0.0
+                                m["vote_count"] = 0
+                                m["runtime"] = None
+                                m["original_language"] = ""
+                                m["release_date"] = seed_movie.get("release_date")
 
-                            show_movie_card(m, api_key, show_add_button=True, key_prefix="seedrec_")
-                            st.caption("Why this recommendation: " + explain_similarity(seed_details, row))
-                            st.markdown("---")
+                            explanation = explain_similarity(seed_details, row)
+                            rec_cards.append({"movie": m, "explanation": explanation})
+
+                        st.session_state["seed_recs"] = rec_cards
 
             else:
                 st.info("No movies found with that title.")
+
+        # Always render seed_recs from state
+        if st.session_state["seed_recs"]:
+            st.markdown("#### Recommended for you")
+            for rec in st.session_state["seed_recs"]:
+                show_movie_card(rec["movie"], api_key, show_add_button=True, key_prefix="seedrec_")
+                st.caption("Why this recommendation: " + rec["explanation"])
+                st.markdown("---")
 
     # -------- Tab 2: Browse & Filter --------
     with tab2:
@@ -824,17 +831,19 @@ def main():
                     people_ids=people_ids or None,
                     max_pages=3,
                 )
+                st.session_state["discover_results"] = movies
             except Exception as e:
                 st.error(f"Error running discovery: {e}")
-                movies = []
+                st.session_state["discover_results"] = []
 
-            if movies:
-                st.success(f"Found {len(movies)} matching movies (showing up to 30).")
-                for m in movies[:30]:
-                    show_movie_card(m, api_key, key_prefix="discover_")
-                    st.markdown("---")
-            else:
-                st.info("No movies found with those filters.")
+        movies = st.session_state["discover_results"]
+        if movies:
+            st.success(f"Found {len(movies)} matching movies (showing up to 30).")
+            for m in movies[:30]:
+                show_movie_card(m, api_key, key_prefix="discover_")
+                st.markdown("---")
+        else:
+            st.info("No movies found with those filters yet. Click 'Run discovery search'.")
 
     # -------- Tab 3: Watchlist --------
     with tab3:
