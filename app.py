@@ -437,12 +437,23 @@ def show_movie_card(
             st.caption(overview[:300] + ("..." if len(overview) > 300 else ""))
 
         if show_add_button:
-            # Use key_prefix so keys are unique across sections/tabs
-            if st.button("➕ Add to watchlist", key=f"{key_prefix}add_{m.get('id')}"):
-                wl = st.session_state.setdefault("watchlist", [])
-                if m.get("id") not in [x["id"] for x in wl]:
-                    wl.append({"id": m["id"], "title": title})
-                st.success(f"Added **{title}** to watchlist!")
+            btn_key = f"{key_prefix}add_{m.get('id')}"
+            if st.button("➕ Add to watchlist", key=btn_key):
+                # Ensure watchlist exists
+                if "watchlist" not in st.session_state:
+                    st.session_state["watchlist"] = []
+
+                mid = m.get("id")
+                if mid is None:
+                    st.error("Could not add this movie (missing ID).")
+                    return
+
+                current_ids = [item["id"] for item in st.session_state["watchlist"]]
+                if mid not in current_ids:
+                    st.session_state["watchlist"].append({"id": mid, "title": title})
+                    st.success(f"Added **{title}** to watchlist!")
+                else:
+                    st.info("Already in watchlist.")
 
 
 def explain_similarity(seed: Dict[str, Any], rec_row: pd.Series):
@@ -490,8 +501,13 @@ def main():
         st.error("Please provide a TMDB API key in the sidebar to get started.")
         st.stop()
 
+    # Initialize watchlist in session_state
     if "watchlist" not in st.session_state:
         st.session_state["watchlist"] = []
+
+    # Sidebar watchlist counter
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"**Watchlist size:** {len(st.session_state['watchlist'])}")
 
     # ------------ Sidebar filters ------------
     st.sidebar.markdown("## Global Filters")
