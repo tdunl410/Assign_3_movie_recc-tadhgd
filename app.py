@@ -2,7 +2,7 @@
 import os
 import math
 from collections import Counter
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 import requests
 import numpy as np
@@ -242,7 +242,11 @@ def mood_label(polarity: float) -> str:
     return "neutral / mixed"
 
 
-def extract_people(details: Dict[str, Any]) -> (List[str], str):
+def extract_people(details: Dict[str, Any]) -> Tuple[List[str], str]:
+    """
+    Returns (cast_names, director_name).
+    Correct type hint using Tuple[...] instead of (List[str], str).
+    """
     credits = details.get("credits", {})
     cast = credits.get("cast", []) or []
     crew = credits.get("crew", []) or []
@@ -488,25 +492,22 @@ def show_movie_card(
             clicked = st.button("➕ Add to watchlist", key=btn_key)
 
             if clicked:
-                # Always ensure the key exists
+                # Ensure key exists
                 if "watchlist" not in st.session_state:
                     st.session_state["watchlist"] = []
 
-                st.sidebar.markdown(f"**Watchlist size:** {len(st.session_state['watchlist'])}")
-                st.sidebar.caption(str(st.session_state["watchlist"]))
-                
                 mid = m.get("id")
                 if mid is None:
                     st.error("Could not add this movie (missing ID).")
                     return
 
-                # Work on a local copy and then reassign (no in-place mutation)
+                # Work on a copy and reassign to avoid any weirdness
                 current = list(st.session_state["watchlist"])
                 current_ids = [item["id"] for item in current]
 
                 if mid not in current_ids:
                     current.append({"id": mid, "title": title})
-                    st.session_state["watchlist"] = current  # <- REASSIGN HERE
+                    st.session_state["watchlist"] = current
                     st.success(f"Added **{title}** to watchlist!")
                 else:
                     st.info("Already in watchlist.")
@@ -561,9 +562,11 @@ def main():
     if "watchlist" not in st.session_state:
         st.session_state["watchlist"] = []
 
-    # Sidebar watchlist counter
+    # Sidebar watchlist debug
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"**Watchlist size:** {len(st.session_state['watchlist'])}")
+    # Debug: raw state (you can remove this once you're happy)
+    st.sidebar.caption(f"Raw watchlist: {st.session_state['watchlist']}")
 
     # ------------ Sidebar filters ------------
     st.sidebar.markdown("## Global Filters")
