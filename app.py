@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 import streamlit as st
-import matplotlib.pyplot as plt
+import altair as alt
 
 # -----------------------------
 # Constants & basic config
@@ -899,12 +899,22 @@ def main():
                 ["title", "vote_average", "vote_count", "popularity"]
             ].dropna()
 
-            fig, ax = plt.subplots()
-            ax.scatter(df["popularity"], df["vote_average"])
-            ax.set_xlabel("Popularity")
-            ax.set_ylabel("Average rating")
-            ax.set_title("Trending movies – rating vs popularity")
-            st.pyplot(fig)
+            chart = (
+                alt.Chart(df)
+                .mark_circle(size=80)
+                .encode(
+                    x=alt.X("popularity:Q", title="Popularity"),
+                    y=alt.Y("vote_average:Q", title="Average Rating"),
+                    tooltip=["title", "popularity", "vote_average", "vote_count"],
+                    color=alt.Color("vote_average:Q", scale=alt.Scale(scheme="blues")),
+                )
+                .properties(
+                    width="container",
+                    height=400,
+                    title="Trending Movies – Rating vs Popularity",
+                )
+            )
+            st.altair_chart(chart, use_container_width=True)
         else:
             st.info("Not enough trending data to show the chart.")
 
