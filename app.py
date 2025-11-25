@@ -485,18 +485,28 @@ def show_movie_card(
 
         if show_add_button:
             btn_key = f"{key_prefix}add_{m.get('id')}"
-            if st.button("➕ Add to watchlist", key=btn_key):
+            clicked = st.button("➕ Add to watchlist", key=btn_key)
+
+            if clicked:
+                # Always ensure the key exists
                 if "watchlist" not in st.session_state:
                     st.session_state["watchlist"] = []
 
+                st.sidebar.markdown(f"**Watchlist size:** {len(st.session_state['watchlist'])}")
+                st.sidebar.caption(str(st.session_state["watchlist"]))
+                
                 mid = m.get("id")
                 if mid is None:
                     st.error("Could not add this movie (missing ID).")
                     return
 
-                current_ids = [item["id"] for item in st.session_state["watchlist"]]
+                # Work on a local copy and then reassign (no in-place mutation)
+                current = list(st.session_state["watchlist"])
+                current_ids = [item["id"] for item in current]
+
                 if mid not in current_ids:
-                    st.session_state["watchlist"].append({"id": mid, "title": title})
+                    current.append({"id": mid, "title": title})
+                    st.session_state["watchlist"] = current  # <- REASSIGN HERE
                     st.success(f"Added **{title}** to watchlist!")
                 else:
                     st.info("Already in watchlist.")
