@@ -1,12 +1,12 @@
 # app.py
 import os
+import math
+from collections import Counter
 from typing import List, Dict, Any, Optional
 
 import requests
 import numpy as np
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 import streamlit as st
 import matplotlib.pyplot as plt
@@ -197,7 +197,7 @@ def get_similar_movies(movie_id: int, api_key: str, pages: int = 1) -> List[Dict
 
 
 # -----------------------------
-# NLP & Recommendation helpers
+# Simple sentiment (no external libs)
 # -----------------------------
 
 def compute_sentiment(text: str) -> float:
@@ -315,38 +315,81 @@ def build_feature_frame(
     return pd.DataFrame(rows)
 
 
+# -----------------------------
+# Pure-Python TF-IDF + cosine similarity
+# -----------------------------
+
+def tokenize(text: str) -> List[str]:
+    return [t.lower().strip(".,!?;:()[]\"'") for t in text.split() if t.strip()]
+
+
+def compute_tf(tokens: List[str]) -> Dict[str, float]:
+    count = Counter(tokens)
+    total = len(tokens) if tokens else 1
+    return {word: count[word] / total for word in count}
+
+
+def compute_idf(docs: List[List[str]]) -> Dict[str, float]:
+    N = len(docs)
+    idf: Dict[str, float] = {}
+    all_words = set(word for doc in docs for word in set(doc))
+    for word in all_words:
+        containing = sum(1 for doc in docs if word in doc)
+        idf[word] = math.log((N + 1) / (containing + 1)) + 1.0
+    return idf
+
+
+def compute_tfidf(tokens: List[str], idf: Dict[str, float]) -> Dict[str, float]:
+    tf = compute_tf(tokens)
+    return {word: tf[word] * idf.get(word, 0.0) for word in tf}
+
+
+def cosine_sim_vec(a: Dict[str, float], b: Dict[str, float]) -> float:
+    common = set(a.keys()) & set(b.keys())
+    dot = sum(a[w] * b[w] for w in common)
+    norm_a = math.sqrt(sum(v * v for v in a.values()))
+    norm_b = math.sqrt(sum(v * v for v in b.values()))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
 def hybrid_content_sentiment_recs(
     seed_details: Dict[str, Any],
     candidate_details: List[Dict[str, Any]],
     top_k: int = 10
 ) -> pd.DataFrame:
     """
-    Content-based similarity (TF-IDF on combined text) + sentiment penalty.
+    Content-based similarity using pure-Python TF-IDF + sentiment penalty.
     """
     if not candidate_details:
         return pd.DataFrame()
 
     df = build_feature_frame(seed_details, candidate_details)
 
-    # Vectorize combined_text
-    vectorizer = TfidfVectorizer(
-        max_features=5000,
-        ngram_range=(1, 2),
-        stop_words="english"
-    )
-    X = vectorizer.fit_transform(df["combined_text"])
+    # Tokenize all texts
+    docs = [tokenize(t) for t in df["combined_text"]]
+
+    # Compute IDF across all docs
+    idf = compute_idf(docs)
+
+    # Compute TF-IDF vectors
+    tfidf_vecs = [compute_tfidf(tokens, idf) for tokens in docs]
 
     # Seed is row 0
-    seed_vec = X[0:1]
-    sim = cosine_similarity(seed_vec, X)[0]
+    seed_vec = tfidf_vecs[0]
+
+    # Cosine similarity vs all docs
+    sim = [cosine_sim_vec(seed_vec, v) for v in tfidf_vecs]
 
     seed_sent = df.loc[0, "sentiment"]
     sentiment_diff = np.abs(df["sentiment"].values - seed_sent)
 
     # Hybrid score: higher content similarity and closer sentiment is better
-    hybrid_score = 0.75 * sim - 0.25 * sentiment_diff
+    sim_arr = np.array(sim)
+    hybrid_score = 0.75 * sim_arr - 0.25 * sentiment_diff
 
-    df["content_similarity"] = sim
+    df["content_similarity"] = sim_arr
     df["hybrid_score"] = hybrid_score
 
     # Exclude the seed itself
@@ -400,7 +443,11 @@ def aggregate_watchlist_recs(
             "overview": m.get("overview", ""),
         })
     df = pd.DataFrame(rows)
-    df["score"] = df["freq"] * 1.0 + df["vote_average"] * 0.3 + np.log1p(df["vote_count"]) * 0.1
+    df["score"] = (
+        df["freq"] * 1.0
+        + df["vote_average"] * 0.3
+        + np.log1p(df["vote_count"]) * 0.1
+    )
     return df.sort_values("score", ascending=False).head(per_movie)
 
 
@@ -439,7 +486,6 @@ def show_movie_card(
         if show_add_button:
             btn_key = f"{key_prefix}add_{m.get('id')}"
             if st.button("➕ Add to watchlist", key=btn_key):
-                # Ensure watchlist exists
                 if "watchlist" not in st.session_state:
                     st.session_state["watchlist"] = []
 
@@ -501,7 +547,7 @@ def main():
         st.error("Please provide a TMDB API key in the sidebar to get started.")
         st.stop()
 
-    # Initialize watchlist in session_state
+    # Initialize watchlist
     if "watchlist" not in st.session_state:
         st.session_state["watchlist"] = []
 
@@ -512,7 +558,6 @@ def main():
     # ------------ Sidebar filters ------------
     st.sidebar.markdown("## Global Filters")
 
-    # Year / temporal
     year_min, year_max = st.sidebar.slider(
         "Release year range",
         min_value=1950,
@@ -521,7 +566,6 @@ def main():
         step=1,
     )
 
-    # Quality thresholds
     min_rating = st.sidebar.slider(
         "Minimum rating (TMDB avg)",
         min_value=0.0,
@@ -537,7 +581,6 @@ def main():
         step=10,
     )
 
-    # Runtime & certification
     runtime_min, runtime_max = st.sidebar.slider(
         "Runtime (minutes)",
         min_value=60,
@@ -690,7 +733,7 @@ def main():
                         seed_details = None
 
                     if seed_details:
-                        # Candidate pool: TMDB similar + trending + popular (first 2 pages)
+                        # Candidate pool: TMDB similar + trending + popular
                         candidates = []
                         try:
                             candidates.extend(get_similar_movies(seed_movie["id"], api_key, pages=2))
@@ -723,7 +766,6 @@ def main():
                         st.markdown("#### Recommended for you")
 
                         for _, row in rec_df.iterrows():
-                            # Reconstruct a minimal movie dict for card
                             m = {
                                 "id": int(row["id"]),
                                 "title": row["title"],
@@ -733,7 +775,6 @@ def main():
                                 "vote_count": 0,
                                 "release_date": seed_movie.get("release_date"),
                             }
-                            # Fetch lightweight details to enrich card
                             try:
                                 d = get_movie_details(int(row["id"]), api_key)
                                 m["poster_path"] = d.get("poster_path")
